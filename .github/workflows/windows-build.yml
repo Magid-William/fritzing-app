@@ -38,7 +38,7 @@ jobs:
         with:
           version: '6.5.3'
           arch: win64_msvc2019_64
-          modules: 'qt5compat qtserialport qtsvg qtimageformats qttools'
+          modules: 'qt5compat qtserialport qtimageformats'
           cache: true
 
       - name: Boost 1.85.0 (headers)
@@ -125,14 +125,15 @@ jobs:
         shell: pwsh
         working-directory: ${{ github.workspace }}
         run: |
-          qmake phoenix.pro "QMAKE_TARGET.arch=x86_64" 2>&1 | Tee-Object -FilePath "$env:FZ_PARENT/qmake.log"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE/ci-logs" | Out-Null
+          qmake phoenix.pro "QMAKE_TARGET.arch=x86_64" 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/ci-logs/qmake.log"
           if ($LASTEXITCODE -ne 0) { throw "qmake failed" }
 
       - name: nmake release
         shell: pwsh
         working-directory: ${{ github.workspace }}
         run: |
-          nmake release 2>&1 | Tee-Object -FilePath "$env:FZ_PARENT/nmake.log"
+          nmake release 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/ci-logs/nmake.log"
           if ($LASTEXITCODE -ne 0) { throw "nmake failed" }
           Get-ChildItem "$env:FZ_PARENT/release64" -Filter Fritzing.exe
 
@@ -163,9 +164,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: |
-            ${{ github.workspace }}/../qmake.log
-            ${{ github.workspace }}/../nmake.log
+          path: ${{ github.workspace }}/ci-logs
           if-no-files-found: ignore
           retention-days: 7
 
