@@ -73,7 +73,7 @@ jobs:
           git clone --depth 1 --branch v1.3.1 https://github.com/madler/zlib.git "$parent/zlib-src"
           if ($LASTEXITCODE -ne 0) { throw "zlib clone failed" }
           cmake -S "$parent/zlib-src" -B "$parent/zlib-build" -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_INSTALL_PREFIX="$parent/zlib-1.3.1"
+            -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX="$parent/zlib-1.3.1"
           if ($LASTEXITCODE -ne 0) { throw "zlib configure failed" }
           cmake --build "$parent/zlib-build" --config Release --target INSTALL
           if ($LASTEXITCODE -ne 0) { throw "zlib build failed" }
@@ -91,11 +91,11 @@ jobs:
           cmake -S "$parent/quazip-src" -B "$parent/quazip-build" -G "Visual Studio 17 2022" -A x64 `
             -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" -DQUAZIP_BZIP2=OFF `
             -DZLIB_INCLUDE_DIR="$parent/zlib-1.3.1/include" -DZLIB_LIBRARY="$($zlib.FullName)" `
-            -DCMAKE_INSTALL_PREFIX="$parent/quazip-$qtver-1.4"
+            -DCMAKE_INSTALL_PREFIX="$parent/quazip-$qtver-1.4intuisphere"
           if ($LASTEXITCODE -ne 0) { throw "quazip configure failed" }
           cmake --build "$parent/quazip-build" --config Release --target INSTALL
           if ($LASTEXITCODE -ne 0) { throw "quazip build failed" }
-          Get-ChildItem "$parent/quazip-$qtver-1.4" -Recurse -Name | Select-Object -First 25
+          Get-ChildItem "$parent/quazip-$qtver-1.4intuisphere" -Recurse -Name | Select-Object -First 25
 
       - name: svgpp 1.3.1 (headers)
         shell: pwsh
@@ -164,7 +164,7 @@ jobs:
           & windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw "$deploy/Fritzing.exe"
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
           if (Test-Path "$parent/libgit2-1.7.1/bin/git2.dll") { Copy-Item "$parent/libgit2-1.7.1/bin/git2.dll" $deploy }
-          Get-ChildItem "$parent" -Directory -Filter "quazip-*-1.4" -ErrorAction SilentlyContinue | ForEach-Object {
+          Get-ChildItem "$parent" -Directory -Filter "quazip-*" -ErrorAction SilentlyContinue | ForEach-Object {
             Get-ChildItem $_.FullName -Recurse -Filter "quazip1-qt6.dll" -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName $deploy }
           }
           Copy-Item "$env:GITHUB_WORKSPACE/sketches" $deploy -Recurse
