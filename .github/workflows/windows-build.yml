@@ -66,16 +66,31 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "libgit2 build failed" }
           Get-ChildItem "$parent/libgit2-1.7.1" -Recurse -Include git2.h,git2.lib,git2.dll | ForEach-Object { $_.FullName }
 
+      - name: zlib 1.3.1
+        shell: pwsh
+        run: |
+          $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
+          git clone --depth 1 --branch v1.3.1 https://github.com/madler/zlib.git "$parent/zlib-src"
+          if ($LASTEXITCODE -ne 0) { throw "zlib clone failed" }
+          cmake -S "$parent/zlib-src" -B "$parent/zlib-build" -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_INSTALL_PREFIX="$parent/zlib-1.3.1"
+          if ($LASTEXITCODE -ne 0) { throw "zlib configure failed" }
+          cmake --build "$parent/zlib-build" --config Release --target INSTALL
+          if ($LASTEXITCODE -ne 0) { throw "zlib build failed" }
+          Get-ChildItem "$parent/zlib-1.3.1" -Recurse -Include zlib.lib,zlibstatic.lib,zlib.h | ForEach-Object { $_.FullName }
+
       - name: quazip 1.4
         shell: pwsh
         run: |
           $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
           $qtver = (& qmake -query QT_VERSION).Trim()
-          Write-Host "qt version = $qtver"
+          $zlib = Get-ChildItem "$parent/zlib-1.3.1" -Recurse -Include zlib.lib,zlibstatic.lib | Select-Object -First 1
+          Write-Host "qt version = $qtver ; zlib = $($zlib.FullName)"
           git clone --depth 1 --branch v1.4 https://github.com/stachenov/quazip.git "$parent/quazip-src"
           if ($LASTEXITCODE -ne 0) { throw "quazip clone failed" }
           cmake -S "$parent/quazip-src" -B "$parent/quazip-build" -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" -DQuaZip_BUILD_TESTS=OFF `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" -DQUAZIP_BZIP2=OFF `
+            -DZLIB_INCLUDE_DIR="$parent/zlib-1.3.1/include" -DZLIB_LIBRARY="$($zlib.FullName)" `
             -DCMAKE_INSTALL_PREFIX="$parent/quazip-$qtver-1.4"
           if ($LASTEXITCODE -ne 0) { throw "quazip configure failed" }
           cmake --build "$parent/quazip-build" --config Release --target INSTALL
@@ -126,7 +141,9 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE/ci-logs" | Out-Null
-          qmake phoenix.pro "QMAKE_TARGET.arch=x86_64" 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/ci-logs/qmake.log"
+          $parent = $env:FZ_PARENT.Replace('\','/')
+          $zlib = (Get-ChildItem "$env:FZ_PARENT/zlib-1.3.1" -Recurse -Include zlib.lib,zlibstatic.lib | Select-Object -First 1).FullName.Replace('\','/')
+          qmake phoenix.pro "QMAKE_TARGET.arch=x86_64" "INCLUDEPATH+=$parent/zlib-1.3.1/include" "LIBS+=$zlib" 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/ci-logs/qmake.log"
           if ($LASTEXITCODE -ne 0) { throw "qmake failed" }
 
       - name: nmake release
@@ -148,6 +165,9 @@ jobs:
           & windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw "$deploy/Fritzing.exe"
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
           if (Test-Path "$parent/libgit2-1.7.1/bin/git2.dll") { Copy-Item "$parent/libgit2-1.7.1/bin/git2.dll" $deploy }
+          Get-ChildItem "$parent" -Directory -Filter "quazip-*-1.4" -ErrorAction SilentlyContinue | ForEach-Object {
+            Get-ChildItem $_.FullName -Recurse -Filter "quazip1-qt6.dll" -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName $deploy }
+          }
           Copy-Item "$env:GITHUB_WORKSPACE/sketches" $deploy -Recurse
           Copy-Item "$env:GITHUB_WORKSPACE/translations" $deploy -Recurse
           Copy-Item "$env:GITHUB_WORKSPACE/help" $deploy -Recurse
