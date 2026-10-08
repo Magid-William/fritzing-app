@@ -175,8 +175,8 @@ jobs:
           Copy-Item "$env:GITHUB_WORKSPACE/LICENSE.GPL3" $deploy
           git clone --depth 1 --branch master https://github.com/fritzing/fritzing-parts.git "$deploy/fritzing-parts"
           if ($LASTEXITCODE -ne 0) { throw "fritzing-parts clone failed" }
-          Compress-Archive -Path "$deploy/*" -DestinationPath "$parent/fritzing-windows-x64.zip" -Force
-          Get-Item "$parent/fritzing-windows-x64.zip" | Select-Object FullName, Length
+          Compress-Archive -Path "$deploy/*" -DestinationPath "$env:GITHUB_WORKSPACE/fritzing-windows-x64.zip" -Force
+          Get-Item "$env:GITHUB_WORKSPACE/fritzing-windows-x64.zip" | Select-Object FullName, Length
 
       - name: Upload qmake/nmake logs
         if: always()
@@ -191,5 +191,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: fritzing-windows-x64
-          path: ${{ github.workspace }}/../fritzing-windows-x64.zip
+          path: ${{ github.workspace }}/fritzing-windows-x64.zip
           retention-days: 14
