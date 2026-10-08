@@ -135,6 +135,23 @@ jobs:
           if (!(Test-Path "$parent/ngspice-42/include/ngspice/sharedspice.h")) { throw "sharedspice.h missing" }
           Get-ChildItem "$parent/ngspice-42/include/ngspice" -Name | Select-Object -First 8
 
+      - name: ngspice.dll (optional, best-effort)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
+          $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/lexxmark/winflexbison/releases/latest" -Headers @{ "User-Agent" = "ci" }
+          $asset = $rel.assets | Where-Object { $_.name -like "win_flex_bison*.zip" } | Select-Object -First 1
+          if (-not $asset) { throw "no winflexbison asset" }
+          curl.exe -L --fail -o "$parent/wfb.zip" $asset.browser_download_url
+          Expand-Archive "$parent/wfb.zip" -DestinationPath "$parent/flex-bison" -Force
+          msbuild "$parent/ngspice-src/visualc/sharedspice.sln" /p:Configuration=Release /p:Platform=x64 /m /nologo
+          $dll = Get-ChildItem "$parent/ngspice-src/visualc" -Recurse -Filter ngspice.dll | Select-Object -First 1
+          if (-not $dll) { throw "ngspice.dll not produced" }
+          New-Item -ItemType Directory -Force "$parent/ngspice-42/lib" | Out-Null
+          Copy-Item $dll.FullName "$parent/ngspice-42/lib/ngspice.dll"
+          Get-Item "$parent/ngspice-42/lib/ngspice.dll" | Select-Object FullName, Length
+
       - name: qmake configure
         shell: pwsh
         working-directory: ${{ github.workspace }}
@@ -171,6 +188,7 @@ jobs:
           if (Test-Path "$env:QT_ROOT_DIR/bin/Qt6Core5Compat.dll") { Copy-Item "$env:QT_ROOT_DIR/bin/Qt6Core5Compat.dll" $deploy }
           Get-ChildItem "$parent/zlib-1.3.1" -Recurse -Include *.dll -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName $deploy }
           if (Test-Path "$deploy/quazip1-qt6.dll") { & windeployqt --release --no-translations "$deploy/quazip1-qt6.dll" 2>$null }
+          if (Test-Path "$parent/ngspice-42/lib/ngspice.dll") { Copy-Item "$parent/ngspice-42/lib/ngspice.dll" $deploy }
           Copy-Item "$env:GITHUB_WORKSPACE/sketches" $deploy -Recurse
           Copy-Item "$env:GITHUB_WORKSPACE/translations" $deploy -Recurse
           Copy-Item "$env:GITHUB_WORKSPACE/help" $deploy -Recurse
@@ -179,7 +197,17 @@ jobs:
           Copy-Item "$env:GITHUB_WORKSPACE/LICENSE.GPL3" $deploy
           git clone --depth 1 --branch master https://github.com/fritzing/fritzing-parts.git "$deploy/fritzing-parts"
           if ($LASTEXITCODE -ne 0) { throw "fritzing-parts clone failed" }
-          Compress-Archive -Path "$deploy/*" -DestinationPath "$env:GITHUB_WORKSPACE/fritzing-windows-x64.zip" -Force
+          # build parts.db so the shipped app starts clean (best effort, non-fatal)
+          $db = "$deploy/fritzing-parts/parts.db"
+          Remove-Item "$db*" -Force -ErrorAction SilentlyContinue
+          $proc = Start-Process -FilePath "$deploy/Fritzing.exe" -ArgumentList @('-pp',"$deploy/fritzing-parts",'-db',$db) -PassThru -WorkingDirectory $deploy
+          $deadline = (Get-Date).AddMinutes(20)
+          while ((Get-Date) -lt $deadline -and -not $proc.HasExited) { Start-Sleep -Seconds 15; $proc.Refresh() }
+          if (-not $proc.HasExited) { $proc.Kill() }
+          Write-Host "parts.db built: $(Test-Path $db)"
+          # tar (not Compress-Archive) so hidden files like parts .git are kept
+          tar.exe -a -c -f "$env:GITHUB_WORKSPACE/fritzing-windows-x64.zip" -C $deploy .
+          if ($LASTEXITCODE -ne 0) { throw "tar failed" }
           Get-Item "$env:GITHUB_WORKSPACE/fritzing-windows-x64.zip" | Select-Object FullName, Length
 
       - name: Upload qmake/nmake logs
