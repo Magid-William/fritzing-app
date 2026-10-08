@@ -201,7 +201,7 @@ jobs:
           $db = "$deploy/fritzing-parts/parts.db"
           Remove-Item "$db*" -Force -ErrorAction SilentlyContinue
           $proc = Start-Process -FilePath "$deploy/Fritzing.exe" -ArgumentList @('-pp',"$deploy/fritzing-parts",'-db',$db) -PassThru -WorkingDirectory $deploy
-          $deadline = (Get-Date).AddMinutes(20)
+          $deadline = (Get-Date).AddMinutes(45)
           while ((Get-Date) -lt $deadline -and -not $proc.HasExited) { Start-Sleep -Seconds 15; $proc.Refresh() }
           if (-not $proc.HasExited) { $proc.Kill() }
           Write-Host "parts.db built: $(Test-Path $db)"
