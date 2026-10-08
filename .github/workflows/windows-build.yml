@@ -1,0 +1,177 @@
+name: windows-build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ ci/windows ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Layout
+        shell: pwsh
+        run: |
+          $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
+          "FZ_PARENT=$parent" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "parent = $parent"
+
+      - name: MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.5.3'
+          arch: win64_msvc2019_64
+          modules: 'qt5compat qtserialport qtsvg qtimageformats qttools'
+          cache: true
+
+      - name: Boost 1.85.0 (headers)
+        shell: pwsh
+        run: |
+          $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
+          if (!(Test-Path "$parent/boost_1_85_0")) {
+            curl.exe -L --fail -o "$parent/boost.zip" "https://archives.boost.io/release/1.85.0/source/boost_1_85_0.zip"
+            if ($LASTEXITCODE -ne 0) { throw "boost download failed" }
+            Expand-Archive "$parent/boost.zip" -DestinationPath $parent -Force
+          }
+          Get-ChildItem "$parent/boost_1_85_0" -Name | Select-Object -First 3
+
+      - name: libgit2 1.7.1
+        shell: pwsh
+        run: |
+          $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
+          git clone --depth 1 --branch v1.7.1 https://github.com/libgit2/libgit2.git "$parent/libgit2-src"
+          if ($LASTEXITCODE -ne 0) { throw "libgit2 clone failed" }
+          cmake -S "$parent/libgit2-src" -B "$parent/libgit2-build" -G "Visual Studio 17 2022" -A x64 `
+            -DBUILD_TESTS=OFF -DBUILD_CLI=OFF -DBUILD_EXAMPLES=OFF -DUSE_SSH=OFF -DUSE_WINHTTP=ON `
+            -DCMAKE_INSTALL_PREFIX="$parent/libgit2-1.7.1"
+          if ($LASTEXITCODE -ne 0) { throw "libgit2 configure failed" }
+          cmake --build "$parent/libgit2-build" --config Release --target INSTALL
+          if ($LASTEXITCODE -ne 0) { throw "libgit2 build failed" }
+          Get-ChildItem "$parent/libgit2-1.7.1" -Recurse -Include git2.h,git2.lib,git2.dll | ForEach-Object { $_.FullName }
+
+      - name: quazip 1.4
+        shell: pwsh
+        run: |
+          $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
+          $qtver = (& qmake -query QT_VERSION).Trim()
+          Write-Host "qt version = $qtver"
+          git clone --depth 1 --branch v1.4 https://github.com/stachenov/quazip.git "$parent/quazip-src"
+          if ($LASTEXITCODE -ne 0) { throw "quazip clone failed" }
+          cmake -S "$parent/quazip-src" -B "$parent/quazip-build" -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" -DQuaZip_BUILD_TESTS=OFF `
+            -DCMAKE_INSTALL_PREFIX="$parent/quazip-$qtver-1.4"
+          if ($LASTEXITCODE -ne 0) { throw "quazip configure failed" }
+          cmake --build "$parent/quazip-build" --config Release --target INSTALL
+          if ($LASTEXITCODE -ne 0) { throw "quazip build failed" }
+          Get-ChildItem "$parent/quazip-$qtver-1.4" -Recurse -Name | Select-Object -First 25
+
+      - name: svgpp 1.3.1 (headers)
+        shell: pwsh
+        run: |
+          $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
+          git clone --depth 1 https://github.com/svgpp/svgpp.git "$parent/svgpp-1.3.1"
+          if ($LASTEXITCODE -ne 0) { throw "svgpp clone failed" }
+          Test-Path "$parent/svgpp-1.3.1/include/svgpp"
+
+      - name: Clipper1 6.4.2
+        shell: pwsh
+        run: |
+          $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
+          curl.exe -L --fail -o "$parent/clipper.zip" "https://downloads.sourceforge.net/project/polyclipping/clipper_ver6.4.2.zip"
+          if ($LASTEXITCODE -ne 0) { throw "clipper download failed" }
+          Expand-Archive "$parent/clipper.zip" -DestinationPath "$parent/clipper" -Force
+          $cpp = Get-ChildItem "$parent/clipper" -Recurse -Filter clipper.cpp | Select-Object -First 1
+          $dir = $cpp.DirectoryName
+          New-Item -ItemType Directory -Force "$parent/Clipper1-6.4.2/include/polyclipping" | Out-Null
+          New-Item -ItemType Directory -Force "$parent/Clipper1-6.4.2/lib" | Out-Null
+          Copy-Item "$dir/*.hpp" "$parent/Clipper1-6.4.2/include/polyclipping/"
+          cl /nologo /c /EHsc /O2 /MD /I "$dir" "$($cpp.FullName)" /Fo"$parent/Clipper1-6.4.2/clipper.obj"
+          if ($LASTEXITCODE -ne 0) { throw "clipper compile failed" }
+          lib /nologo /OUT:"$parent/Clipper1-6.4.2/lib/polyclipping.lib" "$parent/Clipper1-6.4.2/clipper.obj"
+          if ($LASTEXITCODE -ne 0) { throw "clipper lib failed" }
+          Get-ChildItem "$parent/Clipper1-6.4.2" -Recurse -Name
+
+      - name: ngspice 42 headers
+        shell: pwsh
+        run: |
+          $parent = Split-Path $env:GITHUB_WORKSPACE -Parent
+          curl.exe -L --fail -o "$parent/ngspice.tar.gz" "https://downloads.sourceforge.net/project/ngspice/ng-spice-rework/42/ngspice-42.tar.gz"
+          if ($LASTEXITCODE -ne 0) { throw "ngspice download failed" }
+          tar -xzf "$parent/ngspice.tar.gz" -C "$parent" "ngspice-42/src/include/ngspice"
+          if ($LASTEXITCODE -ne 0) { throw "ngspice extract failed" }
+          New-Item -ItemType Directory -Force "$parent/ngspice-42/include" | Out-Null
+          if (Test-Path "$parent/ngspice-42/include/ngspice") { Remove-Item -Recurse -Force "$parent/ngspice-42/include/ngspice" }
+          Move-Item "$parent/ngspice-42/src/include/ngspice" "$parent/ngspice-42/include/ngspice"
+          Get-ChildItem "$parent/ngspice-42/include/ngspice" -Name | Select-Object -First 15
+
+      - name: qmake configure
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          qmake phoenix.pro "QMAKE_TARGET.arch=x86_64" 2>&1 | Tee-Object -FilePath "$env:FZ_PARENT/qmake.log"
+          if ($LASTEXITCODE -ne 0) { throw "qmake failed" }
+
+      - name: nmake release
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        run: |
+          nmake release 2>&1 | Tee-Object -FilePath "$env:FZ_PARENT/nmake.log"
+          if ($LASTEXITCODE -ne 0) { throw "nmake failed" }
+          Get-ChildItem "$env:FZ_PARENT/release64" -Filter Fritzing.exe
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $parent = $env:FZ_PARENT
+          $deploy = "$parent/deploy"
+          Remove-Item $deploy -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $deploy | Out-Null
+          Copy-Item "$parent/release64/Fritzing.exe" $deploy
+          & windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw "$deploy/Fritzing.exe"
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
+          if (Test-Path "$parent/libgit2-1.7.1/bin/git2.dll") { Copy-Item "$parent/libgit2-1.7.1/bin/git2.dll" $deploy }
+          Copy-Item "$env:GITHUB_WORKSPACE/sketches" $deploy -Recurse
+          Copy-Item "$env:GITHUB_WORKSPACE/translations" $deploy -Recurse
+          Copy-Item "$env:GITHUB_WORKSPACE/help" $deploy -Recurse
+          Copy-Item "$env:GITHUB_WORKSPACE/README.md" $deploy
+          Copy-Item "$env:GITHUB_WORKSPACE/INSTALL.txt" $deploy
+          Copy-Item "$env:GITHUB_WORKSPACE/LICENSE.GPL3" $deploy
+          git clone --depth 1 --branch master https://github.com/fritzing/fritzing-parts.git "$deploy/fritzing-parts"
+          if ($LASTEXITCODE -ne 0) { throw "fritzing-parts clone failed" }
+          Compress-Archive -Path "$deploy/*" -DestinationPath "$parent/fritzing-windows-x64.zip" -Force
+          Get-Item "$parent/fritzing-windows-x64.zip" | Select-Object FullName, Length
+
+      - name: Upload qmake/nmake logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            ${{ github.workspace }}/../qmake.log
+            ${{ github.workspace }}/../nmake.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload Fritzing package
+        uses: actions/upload-artifact@v4
+        with:
+          name: fritzing-windows-x64
+          path: ${{ github.workspace }}/../fritzing-windows-x64.zip
+          retention-days: 14
